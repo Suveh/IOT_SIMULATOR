@@ -12,10 +12,12 @@ BROKER = "mqtt.protonest.co"
 PORT = 8883
 TOPIC_BASE = "protonest/devices"
 
-NUM_DEVICES = 10   # start with 10
+NUM_DEVICES = 500   # change to 200, 300 later
 START_ID = 1
 
 PASSWORD = os.getenv("MQTT_PASSWORD")
+
+clients = []
 
 
 def generate_sensor_data(device_id):
@@ -28,53 +30,80 @@ def generate_sensor_data(device_id):
     }
 
 
-def run_device(num):
+def create_client(num):
     username = f"test-protonest#num#{num}"
     client_id = username
 
     client = mqtt.Client(client_id=client_id)
 
-    # Authentication
     client.username_pw_set(username=username, password=PASSWORD)
 
-    # TLS (required for mqtts)
     client.tls_set(cert_reqs=ssl.CERT_NONE)
     client.tls_insecure_set(True)
 
-    try:
-        client.connect(BROKER, PORT, 60)
-        client.loop_start()
-        print(f"[CONNECTED] {client_id}")
-    except Exception as e:
-        print(f"[ERROR] {client_id} connection failed:", e)
-        return
+    return client, client_id
 
-    safe_client_id = client_id.replace("#", "_")
-    topic = f"{TOPIC_BASE}/{safe_client_id}"
 
-    while True:
+def connect_all():
+    print("\nConnecting all devices...")
+
+    for i in range(START_ID, START_ID + NUM_DEVICES):
+        client, client_id = create_client(i)
+        try:
+            client.connect(BROKER, PORT, 60)
+            client.loop_start()
+            clients.append((client, client_id))
+
+            time.sleep(0.05)  
+
+        except Exception as e:
+            print(f"[ERROR] {client_id}: {e}")
+    print("All devices connected")
+
+
+def send_all():
+    print("\nSending data from all devices...")
+    for client, client_id in clients:
+        safe_client_id = client_id.replace("#", "_")
+        topic = f"{TOPIC_BASE}/{safe_client_id}"
+
         data = generate_sensor_data(client_id)
         payload = json.dumps(data)
 
         client.publish(topic, payload)
-        print(f"[{client_id}] Sent")
 
-        time.sleep(random.uniform(1, 3))
+    print("All devices sent data")
+
+
+def disconnect_all():
+    print("\nDisconnecting all devices...")
+    for client, _ in clients:
+        client.loop_stop()
+        client.disconnect()
+
+    print("All devices disconnected")
+
+
+def run_test_cycle():
+    connect_all()
+    time.sleep(3)
+
+    send_all()
+    time.sleep(3)
+
+    disconnect_all()
 
 
 def main():
-    threads = []
+    print("Starting MQTT Load Test...\n")
 
-    for i in range(START_ID, START_ID + NUM_DEVICES):
-        t = threading.Thread(target=run_device, args=(i,))
-        t.daemon = True
-        t.start()
+    # Run multiple cycles
+    for cycle in range(3):
+        print(f"\nCycle {cycle + 1}")
+        run_test_cycle()
+        time.sleep(5)
 
-        threads.append(t)
-        time.sleep(0.2)
-
-    while True:
-        time.sleep(1)
+    print("\nTest Completed")
 
 
 if __name__ == "__main__":
